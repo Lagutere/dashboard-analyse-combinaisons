@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import re
 
 st.set_page_config(page_title="Analyse des Combinaisons", page_icon="📦", layout="wide")
 
@@ -153,34 +154,43 @@ if fichiers_persistants:
                 selected_sku = st.selectbox("Choisir ou taper une référence (SKU)", all_skus)
 
                 if selected_sku:
+                    # Retrouver toutes les commandes contenant ce SKU dans l'ensemble des données filtrées
                     matching_orders = df_orders[df_orders['items_list'].apply(lambda items: any(i['sku'] == selected_sku for i in items))]
                     
                     st.info(f"Le produit **{selected_sku}** apparaît dans **{len(matching_orders)}** commandes uniques.")
                     
                     table_data = []
                     for _, row in matching_orders.iterrows():
-                        sku_weight = next((i['weight'] for i in row['items_list'] if i['sku'] == selected_sku), 0.0)
+                        # On récupère la quantité exacte de ce SKU dans cette commande précise
+                        sku_item = next((i for i in row['items_list'] if i['sku'] == selected_sku), None)
+                        sku_qty = sku_item['qty'] if sku_item else 1
+                        sku_weight = sku_item['weight'] if sku_item else 0.0
+                        
                         table_data.append({
                             'combinaison': row['combinaison'],
-                            'weight': sku_weight
+                            'items_list': row['items_list'],
+                            'weight': sku_weight,
+                            'sku_qty': sku_qty
                         })
                     
                     df_matching_details = pd.DataFrame(table_data)
                     
+                    # Groupement par combinaison associée
                     sku_comb_summary = df_matching_details.groupby('combinaison').agg(
                         Nombre_de_Commandes=('weight', 'count'),
-                        Poids_Colis_kg=('weight', 'first')
+                        Poids_Colis_kg=('weight', 'first'),
+                        Qte_SKU=('sku_qty', 'first'),
+                        Items_List=('items_list', 'first')
                     ).reset_index()
                     
                     sku_comb_summary = sku_comb_summary.sort_values(by='Nombre_de_Commandes', ascending=False).reset_index(drop=True)
                     
-                    df_editable = sku_comb_summary.copy()
+                    df_editable = sku_comb_summary[['combinaison', 'Nombre_de_Commandes', 'Poids_Colis_kg', 'Qte_SKU', 'Items_List']].copy()
                     df_editable.insert(0, "Sélection", False)
-                    df_editable.columns = ['Sélection', 'Combinaison associée', 'Nombre de Commandes', 'Poids Colis (kg)']
+                    df_editable.columns = ['Sélection', 'Combinaison associée', 'Nombre de Commandes', 'Poids Colis (kg)', 'Qte_SKU_Hidden', 'Items_Hidden']
 
                     st.markdown("#### Détail des combinaisons contenant ce produit :")
                     
-                    # Le tableau éditable renvoie les modifications en direct
                     edited_df = st.data_editor(
                         df_editable,
                         column_config={
@@ -192,11 +202,37 @@ if fichiers_persistants:
                         key=f"editor_{selected_sku}"
                     )
 
-                    # Calcul de la somme des commandes cochées
-                    somme_cochees = int(edited_df.loc[edited_df["Sélection"] == True, "Nombre de Commandes"].sum())
+                    # Filtrer uniquement les lignes cochées
+                    cochees_df = edited_df[edited_df["Sélection"] == True]
 
-                    # Affichage clair et visible de la somme sigma juste en dessous
+                    # 1. Somme des commandes
+                    somme_cochees = int(cochees_df["Nombre de Commandes"].sum())
+
+                    # 2. Somme des produits du SKU sélectionné (Nb commandes * quantité dans la combinaison)
+                    total_produits_sku = int((cochees_df["Nombre de Commandes"] * cochees_df["Qte_SKU_Hidden"]).sum())
+
+                    # 3. Calcul des autres SKU sélectionnés et de leurs quantités cumulées
+                    autres_sku_dict = {}
+                    for _, row in cochees_df.iterrows():
+                        nb_cmds = row["Nombre de Commandes"]
+                        items = row["Items_Hidden"]
+                        for item in items:
+                            s = item['sku']
+                            q = item['qty']
+                            if s != selected_sku:
+                                autres_sku_dict[s] = autres_sku_dict.get(s, 0) + (nb_cmds * q)
+
+                    # Affichage des résultats en bas
                     st.markdown(f"### 🧮 ∑ Somme des commandes sélectionnées : **{somme_cochees}**")
+                    st.markdown(f"📦 **Nombre total de produits {selected_sku} :** **{total_produits_sku}**")
+
+                    if autres_sku_dict:
+                        # Tri alphabétique ou par volume décroissant des autres SKU
+                        autres_sku_tries = sorted(autres_sku_dict.items(), key=lambda x: x[1], reverse=True)
+                        details_autres = ", ".join([f"{sku} (x{q})" for sku, q in autres_sku_tries])
+                        st.markdown(f"🔗 **Autres SKU sélectionnés :** {details_autres}")
+                    else:
+                        st.markdown(f"🔗 **Autres SKU sélectionnés :** Aucun (paniers contenant uniquement {selected_sku})")
 
             with tab3:
                 st.subheader("Classement général des ventes par Référence (SKU)")
