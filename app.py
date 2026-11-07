@@ -88,7 +88,6 @@ if fichiers_persistants:
             order_groups = []
             for order_id, group in dataframe.groupby(id_col):
                 items = []
-                total_order_weight = 0.0
                 for _, row in group.iterrows():
                     sku = str(row[sku_col])
                     qty = int(row[qty_col]) if qty_col and pd.notna(row[qty_col]) else 1
@@ -101,10 +100,10 @@ if fichiers_persistants:
                         except:
                             weight_val = 0.0
 
-                    total_order_weight += weight_val
                     items.append({
                         'sku': sku,
                         'qty': qty,
+                        'weight': weight_val,
                         'label': f"{sku} (x{qty})"
                     })
                 
@@ -114,7 +113,7 @@ if fichiers_persistants:
                 order_groups.append({
                     'id': order_id,
                     'combinaison': comb_str,
-                    'poids_total_colis': round(total_order_weight, 1),
+                    'items_list': items_sorted,
                     'nb_articles_differents': len(items_sorted),
                     'lignes_raw': len(group)
                 })
@@ -146,19 +145,31 @@ if fichiers_persistants:
                 selected_sku = st.selectbox("Choisir ou taper une référence (SKU)", all_skus)
 
                 if selected_sku:
-                    matching_orders = df_orders[df_orders['combinaison'].str.contains(selected_sku, regex=False)]
+                    matching_orders = df_orders[df_orders['items_list'].apply(lambda items: any(i['sku'] == selected_sku for i in items))]
                     
                     st.info(f"Le produit **{selected_sku}** apparaît dans **{len(matching_orders)}** commandes uniques.")
                     
-                    # Groupement par combinaison associée avec calcul du nombre de commandes et somme des poids
-                    sku_comb_summary = matching_orders.groupby('combinaison').agg(
-                        Nombre_de_Commandes=('id', 'count'),
-                        Poids_Total_Colis_kg=('poids_total_colis', 'sum')
+                    # On extrait pour chaque commande correspondante le poids unitaire du SKU sélectionné
+                    table_data = []
+                    for _, row in matching_orders.iterrows():
+                        # Trouver le poids de ce SKU précis dans cette commande
+                        sku_weight = next((i['weight'] for i in row['items_list'] if i['sku'] == selected_sku), 0.0)
+                        table_data.append({
+                            'combinaison': row['combinaison'],
+                            'weight': sku_weight
+                        })
+                    
+                    df_matching_details = pd.DataFrame(table_data)
+                    
+                    # Groupement par combinaison : comptage des commandes et récupération du poids unitaire du SKU
+                    sku_comb_summary = df_matching_details.groupby('combinaison').agg(
+                        Nombre_de_Commandes=('weight', 'count'),
+                        Poids_Colis_kg=('weight', 'first') # Poids unitaire pour cette combinaison
                     ).reset_index()
                     
                     # Tri par nombre de commandes décroissant
                     sku_comb_summary = sku_comb_summary.sort_values(by='Nombre_de_Commandes', ascending=False).reset_index(drop=True)
-                    sku_comb_summary.columns = ['Combinaison associée', 'Nombre de Commandes', 'Poids Colis Total (kg)']
+                    sku_comb_summary.columns = ['Combinaison associée', 'Nombre de Commandes', 'Poids Colis (kg)']
                     
                     st.markdown("#### Détail des combinaisons contenant ce produit :")
                     st.dataframe(sku_comb_summary, use_container_width=True, hide_index=True)
@@ -169,12 +180,10 @@ if fichiers_persistants:
                 
                 sku_stats = []
                 for _, row in df_orders.iterrows():
-                    # Recalcul rapide pour l'onglet 3
-                    group_data = df_filtered[df_filtered[col_id] == row['id']]
-                    for _, r in group_data.iterrows():
+                    for item in row['items_list']:
                         sku_stats.append({
-                            'SKU': str(r[col_sku]),
-                            'Quantite': int(r[col_qty]) if col_qty and pd.notna(r[col_qty]) else 1
+                            'SKU': item['sku'],
+                            'Quantite': item['qty']
                         })
                 
                 if sku_stats:
