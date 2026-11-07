@@ -174,38 +174,29 @@ if fichiers_persistants:
                     
                     sku_comb_summary = sku_comb_summary.sort_values(by='Nombre_de_Commandes', ascending=False).reset_index(drop=True)
                     
-                    # On initialise un état de session pour garder en mémoire les cases cochées par SKU si besoin,
-                    # ou on initialise un DataFrame éditable propre.
                     df_editable = sku_comb_summary.copy()
-                    df_editable.insert(0, "Somme", False)
-                    df_editable.columns = ['Somme', 'Combinaison associée', 'Nombre de Commandes', 'Poids Colis (kg)']
+                    df_editable.insert(0, "Sélection", False)
+                    df_editable.columns = ['Sélection', 'Combinaison associée', 'Nombre de Commandes', 'Poids Colis (kg)']
 
                     st.markdown("#### Détail des combinaisons contenant ce produit :")
                     
-                    # Utilisation d'une clé unique pour s'assurer que le tableau se réinitialise bien si on change de SKU
-                    editor_key = f"editor_{selected_sku}"
-                    
+                    # Le tableau éditable renvoie les modifications en direct
                     edited_df = st.data_editor(
                         df_editable,
                         column_config={
-                            "Somme": st.column_config.CheckboxColumn("∑ (0)", help="Cochez pour sommer", default=False),
+                            "Sélection": st.column_config.CheckboxColumn("☑️ Cocher", help="Cochez pour sommer", default=False),
                         },
                         disabled=["Combinaison associée", "Nombre de Commandes", "Poids Colis (kg)"],
                         hide_index=True,
                         use_container_width=True,
-                        key=editor_key
+                        key=f"editor_{selected_sku}"
                     )
 
-                    # Calcul dynamique de la somme des commandes cochées
-                    somme_cochees = int(edited_df.loc[edited_df["Somme"] == True, "Nombre de Commandes"].sum())
+                    # Calcul de la somme des commandes cochées
+                    somme_cochees = int(edited_df.loc[edited_df["Sélection"] == True, "Nombre de Commandes"].sum())
 
-                    # Astuce Streamlit : pour mettre à jour dynamiquement l'en-tête de la colonne "Somme" avec le chiffre, 
-                    # on force un petit rafraîchissement visuel ou on réaffiche le data_editor avec l'en-tête dynamique.
-                    # Redéfinition du titre de colonne dynamique :
-                    col_titre_dynamique = f"∑ ({somme_cochees})"
-                    
-                    if editor_key not in st.session_state:
-                        st.session_state[editor_key] = False
+                    # Affichage clair et visible de la somme sigma juste en dessous
+                    st.markdown(f"### 🧮 ∑ Somme des commandes sélectionnées : **{somme_cochees}**")
 
             with tab3:
                 st.subheader("Classement général des ventes par Référence (SKU)")
