@@ -63,7 +63,7 @@ if fichiers_persistants:
     if 'weight' in raw_df.columns:
         col_weight = 'weight'
     elif len(raw_df.columns) > 5:
-        col_weight = raw_df.columns[5] # Colonne F (index 5)
+        col_weight = raw_df.columns[5]
 
     if col_id and col_sku:
         if col_date:
@@ -136,11 +136,9 @@ if fichiers_persistants:
                 comb_counts = df_orders['combinaison'].value_counts().reset_index()
                 comb_counts.columns = ['Combinaison de SKU', 'Nombre de Commandes']
                 
-                # Calcul des moyennes sur les commandes de la sélection
                 moy_sku = round(df_orders['nb_sku_differents'].mean(), 1)
                 moy_produits = round(df_orders['total_produits'].mean(), 1)
 
-                # Affichage des 4 indicateurs en colonnes
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Commandes uniques totales", len(df_orders))
                 col2.metric("Combinaisons uniques différentes", len(comb_counts))
@@ -175,10 +173,30 @@ if fichiers_persistants:
                     ).reset_index()
                     
                     sku_comb_summary = sku_comb_summary.sort_values(by='Nombre_de_Commandes', ascending=False).reset_index(drop=True)
-                    sku_comb_summary.columns = ['Combinaison associée', 'Nombre de Commandes', 'Poids Colis (kg)']
                     
+                    # Préparation du tableau avec une colonne booléenne pour les cases à cocher
+                    df_editable = sku_comb_summary.copy()
+                    df_editable.insert(0, "Sélection", False)
+                    df_editable.columns = ['Sélection', 'Combinaison associée', 'Nombre de Commandes', 'Poids Colis (kg)']
+
                     st.markdown("#### Détail des combinaisons contenant ce produit :")
-                    st.dataframe(sku_comb_summary, use_container_width=True, hide_index=True)
+                    
+                    # Utilisation de data_editor pour rendre la colonne de gauche cliquable (checkbox)
+                    edited_df = st.data_editor(
+                        df_editable,
+                        column_config={
+                            "Sélection": st.column_config.CheckboxColumn("✅", help="Cochez pour sommer", default=False),
+                        },
+                        disabled=["Combinaison associée", "Nombre de Commandes", "Poids Colis (kg)"],
+                        hide_index=True,
+                        use_container_width=True
+                    )
+
+                    # Calcul dynamique de la somme des commandes cochées
+                    somme_cochees = edited_df.loc[edited_df["Sélection"] == True, "Nombre de Commandes"].sum()
+
+                    # Affichage du titre avec le sigma (Σ) dynamique
+                    st.markdown(f"### ∑ Somme commande = **{somme_cochees}**")
 
             with tab3:
                 st.subheader("Classement général des ventes par Référence (SKU)")
