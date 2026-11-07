@@ -88,9 +88,11 @@ if fichiers_persistants:
             order_groups = []
             for order_id, group in dataframe.groupby(id_col):
                 items = []
+                total_qty_order = 0
                 for _, row in group.iterrows():
                     sku = str(row[sku_col])
                     qty = int(row[qty_col]) if qty_col and pd.notna(row[qty_col]) else 1
+                    total_qty_order += qty
                     
                     weight_val = 0.0
                     if weight_col and pd.notna(row[weight_col]):
@@ -114,7 +116,8 @@ if fichiers_persistants:
                     'id': order_id,
                     'combinaison': comb_str,
                     'items_list': items_sorted,
-                    'nb_articles_differents': len(items_sorted),
+                    'nb_sku_differents': len(items_sorted),
+                    'total_produits': total_qty_order,
                     'lignes_raw': len(group)
                 })
             return pd.DataFrame(order_groups)
@@ -133,9 +136,16 @@ if fichiers_persistants:
                 comb_counts = df_orders['combinaison'].value_counts().reset_index()
                 comb_counts.columns = ['Combinaison de SKU', 'Nombre de Commandes']
                 
-                col1, col2 = st.columns(2)
-                col1.metric("Commandes uniques totales analysées", len(df_orders))
+                # Calcul des moyennes sur les commandes de la sélection
+                moy_sku = round(df_orders['nb_sku_differents'].mean(), 1)
+                moy_produits = round(df_orders['total_produits'].mean(), 1)
+
+                # Affichage des 4 indicateurs en colonnes
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Commandes uniques totales", len(df_orders))
                 col2.metric("Combinaisons uniques différentes", len(comb_counts))
+                col3.metric("Moy. SKU différents / commande", moy_sku)
+                col4.metric("Moy. Produits / commande", moy_produits)
 
                 st.dataframe(comb_counts, use_container_width=True, hide_index=True)
 
@@ -149,10 +159,8 @@ if fichiers_persistants:
                     
                     st.info(f"Le produit **{selected_sku}** apparaît dans **{len(matching_orders)}** commandes uniques.")
                     
-                    # On extrait pour chaque commande correspondante le poids unitaire du SKU sélectionné
                     table_data = []
                     for _, row in matching_orders.iterrows():
-                        # Trouver le poids de ce SKU précis dans cette commande
                         sku_weight = next((i['weight'] for i in row['items_list'] if i['sku'] == selected_sku), 0.0)
                         table_data.append({
                             'combinaison': row['combinaison'],
@@ -161,13 +169,11 @@ if fichiers_persistants:
                     
                     df_matching_details = pd.DataFrame(table_data)
                     
-                    # Groupement par combinaison : comptage des commandes et récupération du poids unitaire du SKU
                     sku_comb_summary = df_matching_details.groupby('combinaison').agg(
                         Nombre_de_Commandes=('weight', 'count'),
-                        Poids_Colis_kg=('weight', 'first') # Poids unitaire pour cette combinaison
+                        Poids_Colis_kg=('weight', 'first')
                     ).reset_index()
                     
-                    # Tri par nombre de commandes décroissant
                     sku_comb_summary = sku_comb_summary.sort_values(by='Nombre_de_Commandes', ascending=False).reset_index(drop=True)
                     sku_comb_summary.columns = ['Combinaison associée', 'Nombre de Commandes', 'Poids Colis (kg)']
                     
