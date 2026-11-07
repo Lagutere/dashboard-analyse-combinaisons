@@ -59,8 +59,6 @@ if fichiers_persistants:
     col_sku = 'orderItems.productRef' if 'orderItems.productRef' in raw_df.columns else None
     col_qty = 'orderItems.quantity' if 'orderItems.quantity' in raw_df.columns else None
     
-    # La colonne F correspond usuellement à l'index 5 ou à une colonne spécifique (ex: 'weight' ou similaire si nommée, sinon on sécurise par index ou nom)
-    # D'après les structures standard, on cherche une colonne de poids ou l'index 5 (colonne F)
     col_weight = None
     if 'weight' in raw_df.columns:
         col_weight = 'weight'
@@ -90,11 +88,11 @@ if fichiers_persistants:
             order_groups = []
             for order_id, group in dataframe.groupby(id_col):
                 items = []
+                total_order_weight = 0.0
                 for _, row in group.iterrows():
                     sku = str(row[sku_col])
                     qty = int(row[qty_col]) if qty_col and pd.notna(row[qty_col]) else 1
                     
-                    # Récupération et conversion du poids de la colonne F en kg (arrondi 1 décimale)
                     weight_val = 0.0
                     if weight_col and pd.notna(row[weight_col]):
                         try:
@@ -103,21 +101,20 @@ if fichiers_persistants:
                         except:
                             weight_val = 0.0
 
+                    total_order_weight += weight_val
                     items.append({
                         'sku': sku,
                         'qty': qty,
-                        'weight': weight_val,
                         'label': f"{sku} (x{qty})"
                     })
                 
-                # Tri alphabétique des SKU pour la combinaison
                 items_sorted = sorted(items, key=lambda x: x['sku'])
                 comb_str = " + ".join([i['label'] for i in items_sorted])
                 
                 order_groups.append({
                     'id': order_id,
                     'combinaison': comb_str,
-                    'items_list': items_sorted,
+                    'poids_total_colis': round(total_order_weight, 1),
                     'nb_articles_differents': len(items_sorted),
                     'lignes_raw': len(group)
                 })
@@ -126,7 +123,6 @@ if fichiers_persistants:
         df_orders = compute_order_combinations(df_filtered, col_id, col_sku, col_qty, col_weight)
 
         if not df_orders.empty:
-            # 3 onglets désormais : Combinaisons, Recherche SKU, Classement SKU
             tab1, tab2, tab3 = st.tabs([
                 "📊 Toutes les Combinaisons", 
                 "🔍 Recherche par Référence (SKU)", 
@@ -150,54 +146,45 @@ if fichiers_persistants:
                 selected_sku = st.selectbox("Choisir ou taper une référence (SKU)", all_skus)
 
                 if selected_sku:
-                    matching_orders = df_orders[df_orders['items_list'].apply(lambda items: any(i['sku'] == selected_sku for i in items))]
+                    matching_orders = df_orders[df_orders['combinaison'].str.contains(selected_sku, regex=False)]
                     
                     st.info(f"Le produit **{selected_sku}** apparaît dans **{len(matching_orders)}** commandes uniques.")
                     
-                    sku_comb_counts = matching_orders['combinaison'].value_counts().reset_index()
-                    sku_comb_counts.columns = ['Combinaison associée', 'Nombre de Commandes']
+                    # Groupement par combinaison associée avec calcul du nombre de commandes et somme des poids
+                    sku_comb_summary = matching_orders.groupby('combinaison').agg(
+                        Nombre_de_Commandes=('id', 'count'),
+                        Poids_Total_Colis_kg=('poids_total_colis', 'sum')
+                    ).reset_index()
+                    
+                    # Tri par nombre de commandes décroissant
+                    sku_comb_summary = sku_comb_summary.sort_values(by='Nombre_de_Commandes', ascending=False).reset_index(drop=True)
+                    sku_comb_summary.columns = ['Combinaison associée', 'Nombre de Commandes', 'Poids Colis Total (kg)']
                     
                     st.markdown("#### Détail des combinaisons contenant ce produit :")
-                    st.dataframe(sku_comb_counts, use_container_width=True, hide_index=True)
-
-                    # Tableau récapitulatif avec le poids colis (colonne F convertie en kg)
-                    st.markdown("#### ⚖️ Détail des commandes et poids colis associés :")
-                    detailed_rows = []
-                    for _, row in matching_orders.iterrows():
-                        # Chercher le poids spécifique de ce SKU dans la commande
-                        w_colis = next((i['weight'] for i in row['items_list'] if i['sku'] == selected_sku), 0.0)
-                        detailed_rows.append({
-                            'ID Commande': row['id'],
-                            'Combinaison Complète': row['combinaison'],
-                            'Poids Colis (kg)': f"{w_colis} kg"
-                        })
-                    df_details = pd.DataFrame(detailed_rows)
-                    st.dataframe(df_details, use_container_width=True, hide_index=True)
+                    st.dataframe(sku_comb_summary, use_container_width=True, hide_index=True)
 
             with tab3:
                 st.subheader("Classement général des ventes par Référence (SKU)")
                 st.markdown("Classement basé sur la quantité totale vendue et le nombre d'apparitions par SKU sur la plage sélectionnée.")
                 
-                # Agréger les données par SKU
                 sku_stats = []
                 for _, row in df_orders.iterrows():
-                    for item in row['items_list']:
+                    # Recalcul rapide pour l'onglet 3
+                    group_data = df_filtered[df_filtered[col_id] == row['id']]
+                    for _, r in group_data.iterrows():
                         sku_stats.append({
-                            'SKU': item['sku'],
-                            'Quantite': item['qty']
+                            'SKU': str(r[col_sku]),
+                            'Quantite': int(r[col_qty]) if col_qty and pd.notna(r[col_qty]) else 1
                         })
                 
                 if sku_stats:
                     df_sku_stats = pd.DataFrame(sku_stats)
-                    # Groupby pour sommer les quantités et compter le nombre de commandes
                     sku_summary = df_sku_stats.groupby('SKU').agg(
                         Commandes_Totales=('Quantite', 'count'),
                         Quantite_Totale_Vendue=('Quantite', 'sum')
                     ).reset_index()
                     
-                    # Trier par quantité totale vendue décroissante
                     sku_summary = sku_summary.sort_values(by='Quantite_Totale_Vendue', ascending=False).reset_index(drop=True)
-                    
                     st.dataframe(sku_summary, use_container_width=True, hide_index=True)
                 else:
                     st.warning("Aucune statistique SKU disponible.")
